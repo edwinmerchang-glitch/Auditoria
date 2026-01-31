@@ -661,9 +661,10 @@ def pagina_historico():
         fecha_min = df["fecha"].min().date()
         fecha_max = df["fecha"].max().date()
         
+        # CORRECCIÓN: Usar tupla en lugar de lista
         rango_fechas = st.date_input(
             "📅 Rango de fechas:",
-            [fecha_max - timedelta(days=30), fecha_max],
+            (fecha_max - timedelta(days=30), fecha_max),  # TUPLA
             min_value=fecha_min,
             max_value=fecha_max
         )
@@ -676,11 +677,15 @@ def pagina_historico():
     if area_filtro != "Todas":
         df = df[df["area"] == area_filtro]
     
+    # CORRECCIÓN: Manejar rango y fecha única
     if len(rango_fechas) == 2:
         df = df[
             (df["fecha"].dt.date >= rango_fechas[0]) & 
             (df["fecha"].dt.date <= rango_fechas[1])
         ]
+    elif len(rango_fechas) == 1:
+        # Si solo selecciona una fecha
+        df = df[df["fecha"].dt.date == rango_fechas[0]]
     
     if auditor_filtro != "Todos":
         df = df[df["auditor"] == auditor_filtro]
@@ -688,6 +693,8 @@ def pagina_historico():
     if df.empty:
         st.warning("⚠️ No hay datos con los filtros seleccionados")
         return
+    
+    # Resto del código sigue igual...
     
     # Resumen estadístico
     st.subheader("📈 Resumen Estadístico")
