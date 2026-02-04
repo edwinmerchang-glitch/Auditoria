@@ -55,18 +55,17 @@ def init_db():
     )
     ''')
     
-    # Tabla de items del checklist
+    # Tabla de items del checklist - MODIFICADA: eliminamos puntaje_max
     cur.execute('''
     CREATE TABLE IF NOT EXISTS checklist_items (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         categoria TEXT NOT NULL,
         item TEXT NOT NULL,
-        puntaje_max INTEGER NOT NULL,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )
     ''')
     
-    # Tabla de resultados de auditorías
+    # Tabla de resultados de auditorías - MODIFICADA: puntaje ahora es TINYINT (0 o 1)
     cur.execute('''
     CREATE TABLE IF NOT EXISTS checklist_results (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -75,7 +74,7 @@ def init_db():
         auditor TEXT NOT NULL,
         categoria TEXT NOT NULL,
         item TEXT NOT NULL,
-        puntaje INTEGER NOT NULL,
+        puntaje INTEGER CHECK(puntaje IN (0, 1)) NOT NULL,  -- 0=No Cumple, 1=Cumple
         observacion TEXT,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )
@@ -226,16 +225,16 @@ def verificar_backup_diario():
 # ============================================================================
 # FUNCIONES MEJORADAS PARA CRUD CON MANEJO DE ERRORES
 # ============================================================================
-def guardar_item_checklist(categoria, item, puntaje_max):
+def guardar_item_checklist(categoria, item):
     """Guarda un nuevo ítem en el checklist con manejo de errores"""
     conn = None
     try:
         conn = get_connection()
         cur = conn.cursor()
         cur.execute("""
-            INSERT INTO checklist_items (categoria, item, puntaje_max)
-            VALUES (?, ?, ?)
-        """, (categoria, item, puntaje_max))
+            INSERT INTO checklist_items (categoria, item)
+            VALUES (?, ?)
+        """, (categoria, item))
         conn.commit()
         
         if 'user' in st.session_state:
@@ -250,7 +249,7 @@ def guardar_item_checklist(categoria, item, puntaje_max):
         if conn:
             conn.close()
 
-def actualizar_item_checklist(item_id, categoria, item, puntaje_max):
+def actualizar_item_checklist(item_id, categoria, item):
     """Actualiza un ítem existente"""
     conn = None
     try:
@@ -258,9 +257,9 @@ def actualizar_item_checklist(item_id, categoria, item, puntaje_max):
         cur = conn.cursor()
         cur.execute("""
             UPDATE checklist_items 
-            SET categoria=?, item=?, puntaje_max=?
+            SET categoria=?, item=?
             WHERE id=?
-        """, (categoria, item, puntaje_max, item_id))
+        """, (categoria, item, item_id))
         conn.commit()
         
         if 'user' in st.session_state:
@@ -379,7 +378,7 @@ def mostrar_sidebar():
         <div style="text-align: center;">
             <h1>✅</h1>
             <h3>Auditoría App</h3>
-            <small style="color: #666;">Persistencia Mejorada</small>
+            <small style="color: #666;">Sistema Cumple/No Cumple</small>
         </div>
         """, unsafe_allow_html=True)
         
@@ -455,7 +454,7 @@ def mostrar_sidebar():
             st.rerun()
 
 # ============================================================================
-# PÁGINA: CHECKLIST
+# PÁGINA: CHECKLIST - MODIFICADA PARA CUMPLE/NO CUMPLE
 # ============================================================================
 def pagina_checklist():
     """Página principal del checklist"""
@@ -504,16 +503,15 @@ def pagina_checklist():
             Para comenzar a realizar auditorías, un administrador debe:
             1. Ir a **⚙️ Administrar Checklist**
             2. Agregar categorías e ítems
-            3. Asignar puntajes máximos
             """)
             return
         
-        total = 0
-        max_total = items["puntaje_max"].sum()
+        total_cumple = 0
+        total_items = len(items)
         respuestas = []
         
         st.markdown("### 📝 Ítems de Auditoría")
-        st.caption(f"📊 Total de ítems: {len(items)} | 🎯 Puntaje máximo posible: {max_total}")
+        st.caption(f"📊 Total de ítems: {total_items}")
         
         # Mostrar cada ítem agrupado por categoría
         categorias = items["categoria"].unique()
@@ -527,16 +525,22 @@ def pagina_checklist():
                     
                     with col1:
                         st.markdown(f"**{row['item']}**")
-                        st.caption(f"🎯 Máximo: {row['puntaje_max']} puntos")
                     
                     with col2:
-                        # Selectbox para puntaje
-                        p = st.selectbox(
-                            "Puntaje",
-                            list(range(0, row["puntaje_max"] + 1)),
+                        # Radio button para Cumple/No Cumple
+                        cumple = st.radio(
+                            "Cumple",
+                            ["✅ Cumple", "❌ No Cumple"],
                             key=f"p_{row['id']}_{idx}",
-                            label_visibility="collapsed"
+                            index=0,  # Por defecto "Cumple"
+                            label_visibility="collapsed",
+                            horizontal=True
                         )
+                        
+                        # Convertir a 1 (Cumple) o 0 (No Cumple)
+                        puntaje = 1 if cumple == "✅ Cumple" else 0
+                        if puntaje == 1:
+                            total_cumple += 1
                     
                     with col3:
                         obs = st.text_area(
@@ -547,35 +551,38 @@ def pagina_checklist():
                             label_visibility="collapsed"
                         )
                     
-                    respuestas.append((row, p, obs))
-                    total += p
+                    respuestas.append((row, puntaje, obs))
         
         st.divider()
         
         # Mostrar resultados
-        porcentaje = round((total / max_total) * 100, 2) if max_total > 0 else 0
+        porcentaje_cumple = round((total_cumple / total_items) * 100, 2) if total_items > 0 else 0
         
         # Tarjetas de resultados
-        col1, col2, col3 = st.columns(3)
+        col1, col2, col3, col4 = st.columns(4)
         with col1:
             with st.container(border=True):
-                st.metric("🎯 Puntaje Obtenido", f"{total}/{max_total}")
+                st.metric("✅ Cumple", f"{total_cumple}")
         
         with col2:
             with st.container(border=True):
-                st.metric("📈 Porcentaje", f"{porcentaje}%")
+                st.metric("❌ No Cumple", f"{total_items - total_cumple}")
         
         with col3:
             with st.container(border=True):
-                if porcentaje >= 90:
+                st.metric("📈 % Cumplimiento", f"{porcentaje_cumple}%")
+        
+        with col4:
+            with st.container(border=True):
+                if porcentaje_cumple >= 90:
                     st.success(f"🟢 Excelente")
-                    st.caption(f"{porcentaje}% Cumplimiento")
-                elif porcentaje >= 70:
+                    st.caption(f"{porcentaje_cumple}% Cumplimiento")
+                elif porcentaje_cumple >= 70:
                     st.warning(f"🟡 Aceptable")
-                    st.caption(f"{porcentaje}% Cumplimiento")
+                    st.caption(f"{porcentaje_cumple}% Cumplimiento")
                 else:
                     st.error(f"🔴 Crítico")
-                    st.caption(f"{porcentaje}% Cumplimiento")
+                    st.caption(f"{porcentaje_cumple}% Cumplimiento")
         
         # Botones de acción
         col1, col2, col3 = st.columns([1, 2, 1])
@@ -614,7 +621,7 @@ def pagina_checklist():
                     
                     # Registrar en log
                     log_operacion(st.session_state.user, "Guardar auditoría", 
-                                f"Área: {area}, Resultado: {porcentaje}%")
+                                f"Área: {area}, Cumplimiento: {porcentaje_cumple}%")
                     
                     # Mostrar mensaje de éxito
                     st.success(f"""
@@ -623,7 +630,8 @@ def pagina_checklist():
                     **📍 Área:** {area}
                     **📅 Fecha:** {fecha.strftime('%d/%m/%Y')}
                     **👤 Auditor:** {st.session_state.user}
-                    **📊 Resultado:** {porcentaje}% cumplimiento
+                    **📊 Resultado:** {porcentaje_cumple}% cumplimiento
+                    **✅ Ítems que cumplen:** {total_cumple} de {total_items}
                     """)
                     
                     # Mostrar botón para nueva auditoría
@@ -634,7 +642,7 @@ def pagina_checklist():
                     conn.close()
 
 # ============================================================================
-# PÁGINA: ADMINISTRAR CHECKLIST - ACTUALIZADA
+# PÁGINA: ADMINISTRAR CHECKLIST - ACTUALIZADA (SIN PUNTAJE)
 # ============================================================================
 def pagina_administrar():
     """Página de administración del checklist"""
@@ -667,20 +675,11 @@ def pagina_administrar():
                     help="Grupo al que pertenece el ítem"
                 )
             
-            with col2:
-                puntaje = st.number_input(
-                    "🎯 Puntaje Máximo*",
-                    min_value=1,
-                    max_value=100,
-                    value=5,
-                    help="Puntaje máximo para este ítem"
-                )
-            
             item = st.text_area(
                 "📝 Descripción del Ítem*",
                 placeholder="Describa el punto a auditar...",
                 height=100,
-                help="Descripción detallada del ítem a evaluar"
+                help="Descripción detallada del ítem a evaluar (Cumple/No Cumple)"
             )
             
             col1, col2 = st.columns([3, 1])
@@ -694,7 +693,7 @@ def pagina_administrar():
             if submitted:
                 if categoria and item:
                     # Usar la nueva función con manejo de errores
-                    exito, mensaje = guardar_item_checklist(categoria, item, puntaje)
+                    exito, mensaje = guardar_item_checklist(categoria, item)
                     if exito:
                         st.success(mensaje)
                         st.rerun()
@@ -709,7 +708,7 @@ def pagina_administrar():
         conn = get_connection()
         try:
             df = pd.read_sql("""
-                SELECT categoria, item, puntaje_max 
+                SELECT categoria, item 
                 FROM checklist_items 
                 ORDER BY categoria, item
             """, conn)
@@ -722,7 +721,13 @@ def pagina_administrar():
                 with col2:
                     st.metric("📂 Categorías", df["categoria"].nunique())
                 with col3:
-                    st.metric("🎯 Puntaje Total", df["puntaje_max"].sum())
+                    # Calcular promedio de cumplimiento histórico
+                    df_stats = pd.read_sql("""
+                        SELECT AVG(puntaje)*100 as promedio_cumplimiento 
+                        FROM checklist_results
+                    """, conn)
+                    promedio = df_stats.iloc[0]['promedio_cumplimiento'] if not df_stats.empty else 0
+                    st.metric("📈 % Cumplimiento", f"{promedio:.1f}%" if promedio else "N/A")
                 with col4:
                     st.metric("💾 Estado", "🟢 Activo")
                 
@@ -733,8 +738,7 @@ def pagina_administrar():
                     hide_index=True,
                     column_config={
                         "categoria": "📂 Categoría",
-                        "item": "📝 Ítem",
-                        "puntaje_max": "🎯 Puntaje Máx"
+                        "item": "📝 Ítem"
                     }
                 )
                 
@@ -780,18 +784,12 @@ def pagina_administrar():
                     
                     new_cat = st.text_input("📂 Categoría", value=selected_item["categoria"])
                     new_item = st.text_area("📝 Ítem", value=selected_item["item"], height=80)
-                    new_puntaje = st.number_input(
-                        "🎯 Puntaje Máximo",
-                        value=int(selected_item["puntaje_max"]),
-                        min_value=1,
-                        max_value=100
-                    )
                     
                     col1, col2 = st.columns(2)
                     with col1:
                         if st.form_submit_button("💾 Guardar Cambios", use_container_width=True):
                             exito, mensaje = actualizar_item_checklist(
-                                selected_item["id"], new_cat, new_item, new_puntaje
+                                selected_item["id"], new_cat, new_item
                             )
                             if exito:
                                 st.success(mensaje)
@@ -918,9 +916,16 @@ def pagina_estado_sistema():
                 ORDER BY fecha DESC LIMIT 1
             """, conn)
             
+            # Calcular promedio de cumplimiento
+            df_promedio = pd.read_sql("""
+                SELECT AVG(puntaje)*100 as promedio 
+                FROM checklist_results
+            """, conn)
+            promedio_cumplimiento = df_promedio.iloc[0]['promedio'] if not df_promedio.empty else 0
+            
             st.metric("📋 Ítems Checklist", df_items.iloc[0]['total'])
             st.metric("📊 Auditorías Realizadas", df_results.iloc[0]['total'])
-            st.metric("👥 Usuarios Registrados", df_users.iloc[0]['total'])
+            st.metric("📈 % Cumplimiento Promedio", f"{promedio_cumplimiento:.1f}%" if promedio_cumplimiento else "N/A")
             
             if not df_last.empty:
                 st.metric("📅 Última Auditoría", 
@@ -986,7 +991,7 @@ def pagina_estado_sistema():
                 pass
 
 # ============================================================================
-# PÁGINA: HISTÓRICO
+# PÁGINA: HISTÓRICO - MODIFICADA PARA CUMPLE/NO CUMPLE
 # ============================================================================
 def pagina_historico():
     """Muestra el histórico de auditorías"""
@@ -1018,8 +1023,11 @@ def pagina_historico():
     # Convertir fecha
     df["fecha"] = pd.to_datetime(df["fecha"])
     
+    # Convertir puntaje a texto legible
+    df["resultado"] = df["puntaje"].apply(lambda x: "✅ Cumple" if x == 1 else "❌ No Cumple")
+    
     # Filtros
-    col1, col2, col3 = st.columns(3)
+    col1, col2, col3, col4 = st.columns(4)
     with col1:
         areas = ["Todas"] + sorted(df["area"].unique().tolist())
         area_filtro = st.selectbox("📍 Área:", areas)
@@ -1040,6 +1048,10 @@ def pagina_historico():
         auditores = ["Todos"] + sorted(df["auditor"].unique().tolist())
         auditor_filtro = st.selectbox("👤 Auditor:", auditores)
     
+    with col4:
+        resultados = ["Todos", "✅ Cumple", "❌ No Cumple"]
+        resultado_filtro = st.selectbox("📊 Resultado:", resultados)
+    
     # Aplicar filtros
     if area_filtro != "Todas":
         df = df[df["area"] == area_filtro]
@@ -1057,24 +1069,31 @@ def pagina_historico():
     if auditor_filtro != "Todos":
         df = df[df["auditor"] == auditor_filtro]
     
+    if resultado_filtro != "Todos":
+        valor_filtro = 1 if resultado_filtro == "✅ Cumple" else 0
+        df = df[df["puntaje"] == valor_filtro]
+    
     if df.empty:
         st.warning("⚠️ No hay datos con los filtros seleccionados")
         return
     
-    # Resto del código sigue igual...
-    
     # Resumen estadístico
     st.subheader("📈 Resumen Estadístico")
     
+    total_auditorias = df["fecha"].nunique()
+    total_items = len(df)
+    total_cumple = df[df["puntaje"] == 1].shape[0]
+    porcentaje_cumple = (total_cumple / total_items * 100) if total_items > 0 else 0
+    
     col1, col2, col3, col4 = st.columns(4)
     with col1:
-        st.metric("📊 Total Auditorías", df["fecha"].nunique())
+        st.metric("📊 Total Auditorías", total_auditorias)
     with col2:
         st.metric("📍 Áreas Auditadas", df["area"].nunique())
     with col3:
-        st.metric("👤 Auditores", df["auditor"].nunique())
+        st.metric("✅ Cumple", f"{total_cumple} ({porcentaje_cumple:.1f}%)")
     with col4:
-        st.metric("🎯 Puntaje Promedio", f"{df['puntaje'].mean():.1f}")
+        st.metric("❌ No Cumple", f"{total_items - total_cumple} ({100 - porcentaje_cumple:.1f}%)")
     
     # Tab detallada
     st.subheader("📋 Detalle de Auditorías")
@@ -1082,6 +1101,9 @@ def pagina_historico():
     # Formatear dataframe para visualización
     df_display = df.copy()
     df_display["fecha"] = df_display["fecha"].dt.strftime("%d/%m/%Y")
+    
+    # Reordenar columnas
+    df_display = df_display[["fecha", "area", "auditor", "categoria", "item", "resultado", "observacion"]]
     
     st.dataframe(
         df_display,
@@ -1093,22 +1115,25 @@ def pagina_historico():
             "auditor": "👤 Auditor",
             "categoria": "📂 Categoría",
             "item": "📝 Ítem",
-            "puntaje": "🎯 Puntaje",
+            "resultado": "📊 Resultado",
             "observacion": "📝 Observación"
         }
     )
     
     # Estadísticas por área
     st.subheader("📊 Estadísticas por Área")
-    stats_area = df.groupby("area").agg({
-        "puntaje": ["count", "mean", "min", "max"]
-    }).round(2)
     
-    stats_area.columns = ["📊 Cantidad", "📈 Promedio", "📉 Mínimo", "📈 Máximo"]
-    st.dataframe(stats_area, use_container_width=True)
+    if not df.empty:
+        # Crear resumen por área
+        stats_area = df.groupby("area").agg({
+            "puntaje": ["count", lambda x: (x == 1).sum(), lambda x: (x == 1).mean() * 100]
+        }).round(2)
+        
+        stats_area.columns = ["📊 Total Ítems", "✅ Cumple", "📈 % Cumplimiento"]
+        st.dataframe(stats_area, use_container_width=True)
 
 # ============================================================================
-# PÁGINA: EXPORTAR
+# PÁGINA: EXPORTAR - MODIFICADA PARA CUMPLE/NO CUMPLE
 # ============================================================================
 def pagina_exportar():
     """Muestra la página de exportación de datos"""
@@ -1131,6 +1156,9 @@ def pagina_exportar():
     # Formatear fechas
     if "fecha" in df.columns:
         df["fecha"] = pd.to_datetime(df["fecha"]).dt.strftime("%Y-%m-%d")
+    
+    # Convertir puntaje a texto
+    df["resultado"] = df["puntaje"].apply(lambda x: "Cumple" if x == 1 else "No Cumple")
     
     # Mostrar vista previa
     st.subheader("📋 Vista Previa de Datos")
@@ -1174,13 +1202,26 @@ def pagina_exportar():
         # Crear Excel
         excel = BytesIO()
         with pd.ExcelWriter(excel, engine='openpyxl') as writer:
+            # Hoja de datos completos
             df_export.to_excel(writer, index=False, sheet_name='Auditorias')
             
-            # Agregar hoja de resumen
-            resumen = df_export.groupby("area").agg({
-                "puntaje": ["count", "mean", "min", "max"]
+            # Hoja de resumen por área
+            resumen_area = df_export.groupby("area").agg({
+                "puntaje": ["count", lambda x: (x == 1).sum(), lambda x: (x == 1).mean() * 100]
             }).round(2)
-            resumen.to_excel(writer, sheet_name='Resumen')
+            resumen_area.columns = ["Total Ítems", "Cumple", "% Cumplimiento"]
+            resumen_area.to_excel(writer, sheet_name='Resumen por Área')
+            
+            # Hoja de resumen general
+            total_items = len(df_export)
+            total_cumple = df_export[df_export["puntaje"] == 1].shape[0]
+            porcentaje_cumple = (total_cumple / total_items * 100) if total_items > 0 else 0
+            
+            resumen_general = pd.DataFrame({
+                "Métrica": ["Total Ítems", "Cumple", "No Cumple", "% Cumplimiento"],
+                "Valor": [total_items, total_cumple, total_items - total_cumple, f"{porcentaje_cumple:.2f}%"]
+            })
+            resumen_general.to_excel(writer, index=False, sheet_name='Resumen General')
         
         excel.seek(0)
         
@@ -1193,7 +1234,7 @@ def pagina_exportar():
             type="primary"
         )
         
-        st.caption("📎 El archivo incluye: Hoja de datos completos + Hoja de resumen")
+        st.caption("📎 El archivo incluye: Datos completos + Resumen por Área + Resumen General")
     
     else:  # CSV
         # Crear CSV
@@ -1214,13 +1255,19 @@ def pagina_exportar():
     st.divider()
     st.subheader("📊 Estadísticas del Archivo")
     
-    col1, col2, col3 = st.columns(3)
+    total_items = len(df_export)
+    total_cumple = df_export[df_export["puntaje"] == 1].shape[0]
+    porcentaje_cumple = (total_cumple / total_items * 100) if total_items > 0 else 0
+    
+    col1, col2, col3, col4 = st.columns(4)
     with col1:
-        st.metric("📄 Registros", len(df_export))
+        st.metric("📄 Registros", total_items)
     with col2:
         st.metric("📍 Áreas", df_export["area"].nunique())
     with col3:
         st.metric("👤 Auditores", df_export["auditor"].nunique())
+    with col4:
+        st.metric("📈 % Cumplimiento", f"{porcentaje_cumple:.1f}%")
 
 # ============================================================================
 # PÁGINA: GESTIÓN DE USUARIOS
