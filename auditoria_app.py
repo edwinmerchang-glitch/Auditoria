@@ -40,7 +40,7 @@ def get_connection():
     return sqlite3.connect(DB_PATH, check_same_thread=False)
 
 def init_db():
-    """Inicializa las tablas de la base de datos"""
+    """Inicializa las tablas de la base de datos - VERSIÓN MODIFICADA"""
     conn = get_connection()
     cur = conn.cursor()
     
@@ -55,7 +55,41 @@ def init_db():
     )
     ''')
     
-    # Tabla de items del checklist - MODIFICADA: eliminamos puntaje_max
+    # PRIMERO: Verificar si la tabla checklist_items existe y tiene la columna puntaje_max
+    cur.execute("PRAGMA table_info(checklist_items)")
+    columns = cur.fetchall()
+    column_names = [col[1] for col in columns] if columns else []
+    
+    if "checklist_items" in [col[0] for col in cur.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()]:
+        # Si la tabla existe, verificar si tiene puntaje_max
+        if "puntaje_max" in column_names:
+            # Crear tabla temporal sin puntaje_max
+            cur.execute('''
+            CREATE TABLE IF NOT EXISTS checklist_items_new (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                categoria TEXT NOT NULL,
+                item TEXT NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+            ''')
+            
+            # Copiar datos existentes (excluyendo puntaje_max)
+            try:
+                cur.execute('''
+                INSERT INTO checklist_items_new (id, categoria, item, created_at)
+                SELECT id, categoria, item, created_at FROM checklist_items
+                ''')
+                
+                # Eliminar tabla antigua
+                cur.execute('DROP TABLE checklist_items')
+                
+                # Renombrar nueva tabla
+                cur.execute('ALTER TABLE checklist_items_new RENAME TO checklist_items')
+            except:
+                # Si hay error, mantener la tabla como está
+                pass
+    
+    # Crear tabla de items del checklist (si no existe)
     cur.execute('''
     CREATE TABLE IF NOT EXISTS checklist_items (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
